@@ -20,10 +20,13 @@ See `.env.example`. Secrets: `SUPABASE_SERVICE_ROLE_KEY`, `GOOGLE_API_KEY`.
 
 ## Tuning (env, no redeploy of code needed — restart container)
 - `PANEL_WP`, `PANEL_LENGTH_M`, `PANEL_WIDTH_M` — belinus module spec (default 500 Wp, 1.954 × 1.134 m)
-- `MIN_SLOT_YIELD` — skip panel positions below this fraction of the best position (default 0.6)
+- `OVERSIZE` — 1 (default): fill up to the DC limit (1-phase 6.5 kWp, 3-phase 13 kWp = 5 / 10 kVA inverter × 1.3); 0: size to consumption
+- `MIN_VALUE` — skip panel positions worth less than this fraction of the best position (default 0.7; shading included)
 - `MAX_DIST_M` — max distance of a panel from the address point, keeps panels off neighbours' roofs (default 9)
 - `MIN_PER_FACE` — smallest group of panels allowed on one roof face (default 4)
-- `FLAT_FACTOR` — score multiplier for flat roofs vs. pitched faces (default 0.92)
+- `FLAT_TILT` / `FLAT_DENSITY` — flat roofs: east–west racks at this tilt (default 12°), usable share after edge set-backs (default 0.85)
+- `SPREAD_BONUS` — ranking bonus for a face that spreads production over the day (other orientation or east–west flat roof, default 0.05)
+- `LAYOUT_DEBUG=1` — log per-face capacity, value and shading
 - Prices, battery sizing, VAT, finance: `src/pricing.ts` (identical to the Aurora version — keep in sync)
 
 ## Data

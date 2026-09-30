@@ -59,6 +59,9 @@ rep('''      return r.status === "succeeded";
     await consumptionP;
     await holdStage();
     setStage(1, "done");''')
+rep('const capWp = phase === "single" ? 5000 : 10000;',
+    '// DC limit: inverter max 5 kVA (1-phase) / 10 kVA (3-phase) with 1.3 DC/AC oversizing\n'
+    '    const capWp = (phase === "single" ? 5000 : 10000) * 1.3;')
 rep('''        design_id: S.designId, target_kwh: targetKwh, mode: a.mode, panels_only: a.panels_only,
       });''', '''        design_id: S.designId, target_kwh: targetKwh, mode: a.mode, panels_only: a.panels_only,
         cap_wp: capWp,
