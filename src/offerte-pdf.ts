@@ -40,7 +40,13 @@ export interface OfferteData {
     total_incl_vat: number;
     deposit: number;
     deposit_label?: string;
+    deposit_offline?: number;
+    online_promo?: {
+      label: string; condition: string; rate: number;
+      discount_incl_vat: number; total_incl_vat: number; deposit: number;
+    };
   };
+  promo_applied?: boolean;  // invoice after online payment: promo lines already in items
 }
 
 const eur = (v: number) =>
@@ -250,6 +256,7 @@ export async function generateOffertePdf(data: OfferteData): Promise<Uint8Array>
     rightText(value, cA, 9, mono, DARK);
     y -= 15;
   };
+  const totalsTopY = y;
   totalRow("Excl. btw", eur(data.price.subtotal_excl_vat));
   for (const [rate, g] of Object.entries(data.price.vat_groups)) {
     totalRow(`BTW ${rate}% op ${eur(g.base)}`, eur(g.vat));
@@ -267,13 +274,36 @@ export async function generateOffertePdf(data: OfferteData): Promise<Uint8Array>
     x: M + W - monoBold.widthOfTextAtSize(totS, 14), y: bandY + 11, size: 14, font: monoBold, color: WHITE,
   });
   y = bandY - 16;
+  const op = data.promo_applied ? undefined : data.price.online_promo;
   if (!data.hide_deposit_line) {
     const depLine = data.price.deposit_label === "reservation"
       ? `Reservatie (volledig terugbetaalbaar bij annulatie): € ${eur(data.price.deposit)}`
-      : `Voorschot bij bestelling (50%): € ${eur(data.price.deposit)}`;
+      : `Voorschot bij bestelling (50%): € ${eur(op ? (data.price.deposit_offline ?? data.price.total_incl_vat * 0.5) : data.price.deposit)}`;
     rightText(depLine, M + W, 8, mono, GREY);
   }
   y -= 34;
+
+  // ================= ONLINE PROMO (conditional) =================
+  // Drawn left of the totals block (same height), so it never forces a page break.
+  if (op && !data.hide_deposit_line) {
+    const boxH = 84, boxX = M, boxW = 230;
+    const boxY = totalsTopY + 10 - boxH;
+    page.drawRectangle({ x: boxX, y: boxY, width: boxW, height: boxH, color: LIGHT });
+    page.drawRectangle({ x: boxX, y: boxY, width: 3, height: boxH, color: CYAN });
+    let yy = boxY + boxH - 16;
+    page.drawText(spaced(op.label.toUpperCase()), { x: boxX + 14, y: yy, size: 6.5, font: monoBold, color: CYAN });
+    yy -= 13;
+    page.drawText(op.condition.charAt(0).toUpperCase() + op.condition.slice(1), { x: boxX + 14, y: yy, size: 7.5, font: helv, color: GREY });
+    const row = (label: string, value: string, bold = false) => {
+      yy -= 15;
+      page.drawText(label, { x: boxX + 14, y: yy, size: 8.5, font: bold ? helvBold : helv, color: DARK });
+      const f = bold ? monoBold : mono;
+      page.drawText(value, { x: boxX + boxW - 12 - f.widthOfTextAtSize(value, 9), y: yy, size: 9, font: f, color: DARK });
+    };
+    row("Korting (incl. btw)", `- € ${eur(op.discount_incl_vat)}`);
+    row("Totaal bij online betaling", `€ ${eur(op.total_incl_vat)}`, true);
+    row("Voorschot online (50%)", `€ ${eur(op.deposit)}`);
+  }
 
   // ================= PAID CARD =================
   if (data.paid_card) {
