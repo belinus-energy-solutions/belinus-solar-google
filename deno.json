@@ -1,0 +1,7 @@
+{
+  "tasks": {
+    "start": "deno run --allow-net --allow-env --allow-read server.ts",
+    "check": "deno check server.ts"
+  },
+  "nodeModulesDir": "none"
+}

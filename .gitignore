@@ -1,0 +1,9 @@
+.env
+public/datasheets/*.pdf
+public/belinus-logo.png
+node_modules/
+# generated at build time from belinus-solar-test (scripts/build_frontend.py)
+public/index.html
+public/cowboy-voorwaarden.html
+public/belinus-logo.svg
+deno.lock
