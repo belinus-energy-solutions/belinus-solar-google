@@ -7,8 +7,9 @@
 const BASE = () => (Deno.env.get("PVGIS_BASE_URL") ?? "https://re.jrc.ec.europa.eu/api/v5_3").replace(/\/$/, "");
 
 export type PvgisResult = {
-  annual_kwh: number;       // E_y
+  annual_kwh: number;       // E_y  — AC yield incl. system losses
   monthly_kwh: number[];    // E_m, Jan..Dec
+  irradiation_kwh_m2: number; // H(i)_y — in-plane irradiation (no local shading)
 };
 
 /**
@@ -43,6 +44,7 @@ export async function pvcalc(opts: {
       return {
         annual_kwh: Number(fixed.E_y),
         monthly_kwh: months.sort((a, b) => a.month - b.month).map((m) => Number(m.E_m)),
+        irradiation_kwh_m2: Number(fixed["H(i)_y"] ?? 0),
       };
     } catch (e) {
       lastErr = e;
