@@ -119,6 +119,14 @@ rep("""    sb += `<div class="kitPrices"><span class="strike mono">€ ${fmt2.fo
     """    sb += `<div class="kitPrices"><span class="strike mono">€ ${fmt2.format(listT)}</span><span class="promoPrice mono">€ ${fmt2.format(promoT)}</span></div>`;
     sb += `<div class="note" style="color:#9aa3a8;margin-top:4px">${(OP_TXT[LANG] || OP_TXT.en).cond}</div>`;""")
 
+# Quote lines link to the product/service folder (datasheet PDF or website)
+rep("""    html += `<tr><td class="num">${String(i + 1).padStart(2, "0")}</td><td class="desc">${it.description}</td>` +""",
+    """    const lk = it.link ? (/^https?:/.test(it.link) ? it.link : SHEETS_BASE + encodeURIComponent(it.link)) : null;
+    const lkLbl = it.link && /^https?:/.test(it.link) ? it.link.replace(/^https?:\\/\\/(www\\.)?/, "") : (LANG === "nl" ? "Productfolder (PDF)" : "Product folder (PDF)");
+    const desc = lk ? `<a href="${lk}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${it.description}</a>` +
+      `<br><a class="sheetLink" href="${lk}" target="_blank" rel="noopener">${lkLbl}</a>` : it.description;
+    html += `<tr><td class="num">${String(i + 1).padStart(2, "0")}</td><td class="desc">${desc}</td>` +""")
+
 if "aurora" in s.lower():
     sys.exit("build_frontend: an Aurora reference is left in the page")
 open(out, "w", encoding="utf-8").write(s)
