@@ -3,7 +3,7 @@
 // Branded template per QT2025-000183 + F2025-000113 (betaald).
 // ============================================================
 
-import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from "npm:pdf-lib@1.17.1";
+import { PDFDocument, PDFFont, PDFPage, PDFString, StandardFonts, rgb } from "npm:pdf-lib@1.17.1";
 import fontkit from "npm:@pdf-lib/fontkit@1.1.1";
 import { COMPANY, type LineItem } from "./pricing.ts";
 import { BRAND, getFontBytes } from "./brand.ts";
@@ -47,6 +47,7 @@ export interface OfferteData {
     };
   };
   promo_applied?: boolean;  // invoice after online payment: promo lines already in items
+  link_base?: string;       // absolute base URL for datasheet links (e.g. https://host/datasheets/)
 }
 
 const eur = (v: number) =>
@@ -140,6 +141,16 @@ export async function generateOffertePdf(data: OfferteData): Promise<Uint8Array>
   const rightText = (s: string, xRight: number, size: number, font: PDFFont, color = DARK, py = y) =>
     page.drawText(s, { x: xRight - font.widthOfTextAtSize(s, size), y: py, size, font, color });
   const spaced = (s: string) => s.split("").join(" ");
+  // Clickable URI area on the current page.
+  const addLink = (x: number, yb: number, w: number, h: number, uri: string) => {
+    const annot = doc.context.obj({
+      Type: "Annot", Subtype: "Link", Rect: [x, yb, x + w, yb + h], Border: [0, 0, 0],
+      A: { Type: "Action", S: "URI", URI: PDFString.of(uri) },
+    });
+    page.node.addAnnot(doc.context.register(annot));
+  };
+  const linkUrl = (l?: string | null) =>
+    !l ? null : /^https?:\/\//.test(l) ? l : (data.link_base ? data.link_base + encodeURIComponent(l) : null);
 
   // ================= HEADER BAND =================
   const bandH = 190;
@@ -243,6 +254,16 @@ export async function generateOffertePdf(data: OfferteData): Promise<Uint8Array>
     rightText(eur(it.amount), cA, 9, monoBold, DARK);
     y -= 12;
     rightText("Stuk(s)", cQ, 6.5, mono, GREY);
+    const href = linkUrl(it.link);
+    if (href) {
+      const lbl = /^https?:/.test(it.link!) ? it.link!.replace(/^https?:\/\/(www\.)?/, "") : "Productfolder (PDF)";
+      text(lbl, cD, 6.5, mono, CYAN);
+      const lw = mono.widthOfTextAtSize(lbl, 6.5);
+      page.drawLine({ start: { x: cD, y: y - 1.5 }, end: { x: cD + lw, y: y - 1.5 }, thickness: 0.4, color: CYAN });
+      addLink(cD, y - 3, lw, 10, href);
+      // the description itself is clickable too
+      addLink(cD, y + 10, Math.min(helvBold.widthOfTextAtSize(it.description, 10), cQ - 50 - cD), 12, href);
+    }
     y -= 14;
     page.drawLine({ start: { x: M, y }, end: { x: M + W, y }, thickness: 0.7, color: RULE });
     y -= 20;
