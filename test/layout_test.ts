@@ -37,3 +37,33 @@ Deno.test("roof-limited", () => {
   if (l.limited_by !== "roof") throw new Error("expected roof limit");
 });
 Deno.test("zoom", () => { const z = viewerZoom(fakeInsights()); console.log("zoom", z); if (z < 18 || z > 21) throw 0; });
+
+// Real roof (terraced house, Waasland): Google returns the whole block.
+function terraced() {
+  const d = JSON.parse(Deno.readTextFileSync(new URL("./fixtures/terraced-house.json", import.meta.url)));
+  return {
+    geo: { lat: d.geocode[0], lng: d.geocode[1] },
+    ins: {
+      center: { latitude: d.center[0], longitude: d.center[1] },
+      boundingBox: { sw: { latitude: d.bbox[0][0], longitude: d.bbox[0][1] }, ne: { latitude: d.bbox[1][0], longitude: d.bbox[1][1] } },
+      solarPotential: {
+        panelHeightMeters: d.dims[0], panelWidthMeters: d.dims[1], panelCapacityWatts: d.dims[2], maxArrayPanelsCount: d.slots.length,
+        roofSegmentStats: d.segs.map((s: any) => ({ pitchDegrees: s[1], azimuthDegrees: s[2], stats: { sunshineQuantiles: [s[4]] } })),
+        solarPanels: d.slots.map((s: any) => ({ segmentIndex: s[0], yearlyEnergyDcKwh: s[1], orientation: s[2], center: { latitude: s[3], longitude: s[4] } })),
+      },
+    },
+  };
+}
+Deno.test("terraced house: one face, compact, nothing on the neighbours' roofs", () => {
+  const { ins, geo } = terraced();
+  for (const [target, cap] of [[3500, 10000], [4500, 5000], [8000, 10000]]) {
+    const l = designLayout(ins, target, cap, geo);
+    if (l.segments.some((s) => s.panel_count < 4)) throw new Error("stray panels on a face");
+    for (const p of l.panels) {
+      const [la, ln] = [p.poly.reduce((a, q) => a + q[0], 0) / 4, p.poly.reduce((a, q) => a + q[1], 0) / 4];
+      const dist = Math.hypot((la - geo.lat) * 111320, (ln - geo.lng) * 111320 * Math.cos(geo.lat * Math.PI / 180));
+      if (dist > 10) throw new Error(`panel ${dist.toFixed(1)} m from the address`);
+    }
+    if (target <= 4500 && l.segments.length !== 1) throw new Error("small system split over faces");
+  }
+});
