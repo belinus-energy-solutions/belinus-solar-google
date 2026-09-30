@@ -22,7 +22,7 @@ import { generateOffertePdf } from "./offerte-pdf.ts";
 import { generateReceiptPdf } from "./receipt-pdf.ts";
 import { buildingInsights, geocode, googleConfigured, roofOrthophoto, staticSatellite } from "./google.ts";
 import { pvcalc } from "./pvgis.ts";
-import { designLayout, PANEL, viewerZoom } from "./layout.ts";
+import { designLayout, type FaceYield, faceMount, PANEL, reachableFaces, viewerZoom } from "./layout.ts";
 
 const SOURCE = "google";
 const ALLOWED = (Deno.env.get("ALLOWED_ORIGINS") ?? "*").split(",").map((s) => s.trim());
@@ -73,6 +73,40 @@ async function patchDesign(id: string, patch: Record<string, unknown>) {
   const { error } = await supabase.from("solar_designs")
     .update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
   if (error) throw { status: 500, body: { message: error.message } };
+}
+
+/**
+ * PVGIS per reachable roof face: AC yield per kWp of the way it will be
+ * mounted (flat roofs: east–west racks) and the unshaded irradiation of the
+ * plane Google measured (flat roofs: horizontal) — the reference for shading.
+ * Falls back to the generic model per face if PVGIS is unreachable.
+ */
+async function faceYields(ins: any, lat: number, lng: number, address: { lat: number; lng: number }) {
+  const segs: any[] = ins?.solarPotential?.roofSegmentStats ?? [];
+  const out: Record<number, FaceYield> = {};
+  const cache = new Map<string, Promise<{ annual_kwh: number; irradiation_kwh_m2: number }>>();
+  const call = (tilt: number, az: number) => {
+    const key = `${Math.round(tilt)}:${Math.round(az / 5) * 5}`;
+    if (!cache.has(key)) cache.set(key, pvcalc({ lat, lng, kwp: 1, pitch: tilt, azimuthGoogle: az }));
+    return cache.get(key)!;
+  };
+  await Promise.all(reachableFaces(ins, address).map(async (idx) => {
+    const st = segs[idx] ?? {};
+    const m = faceMount(st);
+    try {
+      const mounts = await Promise.all(m.azimuths.map((az) => call(m.tilt, az)));
+      const plane = (st.pitchDegrees ?? 30) < 10
+        ? await call(0, 180)
+        : mounts[0];
+      out[idx] = {
+        kwh_per_kwp: mounts.reduce((a, r) => a + r.annual_kwh, 0) / mounts.length,
+        ref_irradiation: plane.irradiation_kwh_m2,
+      };
+    } catch (e) {
+      console.error("PVGIS face yield failed, generic model used:", String((e as any)?.body?.message ?? e));
+    }
+  }));
+  return out;
 }
 
 // Satellite tiles are immutable per design — cache in memory.
@@ -215,7 +249,9 @@ export async function handleApi(req: Request, route: string): Promise<Response> 
         const capWp = Number(body.cap_wp) > 0 ? Number(body.cap_wp) : PRICING.phase_limits_wp.three;
         await patchDesign(d.id, { layout_status: "running" });
         job(d.id, "layout_status", async () => {
-          const layout = designLayout(d.insights, Number(body.target_kwh) || 3500, capWp, { lat: d.lat, lng: d.lng });
+          const address = { lat: d.lat, lng: d.lng };
+          const yields = await faceYields(d.insights, d.lat, d.lng, address);
+          const layout = designLayout(d.insights, Number(body.target_kwh) || 3500, capWp, address, yields);
           return { layout, panel_count: layout.panel_count, kwp: layout.kwp, target_kwh: layout.target_kwh };
         });
         return json({ job_id: `layout-${d.id}`, components_used: { solar_panels: [`belinus ${PANEL.wp()} Wp`] } }, 200, headers);
@@ -237,22 +273,32 @@ export async function handleApi(req: Request, route: string): Promise<Response> 
         if (!d.layout) throw { status: 409, body: { message: "Layout not finished" } };
         await patchDesign(d.id, { sim_status: "running" });
         job(d.id, "sim_status", async () => {
+          // One PVGIS run per face and mount orientation (flat roofs: half east,
+          // half west), multiplied by the face's shading factor.
           const segs = d.layout.segments as any[];
-          const results = await Promise.all(segs.map((s) =>
-            pvcalc({ lat: d.lat, lng: d.lng, kwp: s.kwp, pitch: s.pitch, azimuthGoogle: s.azimuth })
-          ));
-          const perSeg = segs.map((s, i) => ({
-            segment_index: s.segment_index,
-            kwp: s.kwp,
-            pvgis_kwh: Math.round(results[i].annual_kwh),
-            shade_factor: s.shade_factor,
-            kwh: Math.round(results[i].annual_kwh * s.shade_factor),
+          const perSeg = await Promise.all(segs.map(async (s) => {
+            const mount = s.mount ?? { tilt: s.pitch, azimuths: [s.azimuth] };
+            const parts = await Promise.all(mount.azimuths.map((az: number) =>
+              pvcalc({ lat: d.lat, lng: d.lng, kwp: s.kwp / mount.azimuths.length, pitch: mount.tilt, azimuthGoogle: az })
+            ));
+            const pv = parts.reduce((a, r) => a + r.annual_kwh, 0);
+            const monthly = Array.from({ length: 12 }, (_, m) => parts.reduce((a, r) => a + (r.monthly_kwh[m] ?? 0), 0) * s.shade_factor);
+            return {
+              segment_index: s.segment_index, kwp: s.kwp, flat: !!s.flat, mount,
+              pvgis_kwh: Math.round(pv), shade_factor: s.shade_factor,
+              kwh: Math.round(pv * s.shade_factor), monthly,
+            };
           }));
-          const monthly = Array.from({ length: 12 }, (_, m) =>
-            Math.round(results.reduce((a, r, i) => a + (r.monthly_kwh[m] ?? 0) * segs[i].shade_factor, 0))
-          );
+          const monthly = Array.from({ length: 12 }, (_, m) => Math.round(perSeg.reduce((a, s) => a + s.monthly[m], 0)));
           const annual = perSeg.reduce((a, s) => a + s.kwh, 0);
-          return { production: { annual_kwh: annual, monthly_kwh: monthly, segments: perSeg, source: "PVGIS v5.3 × Google shading" }, annual_production_kwh: annual };
+          return {
+            production: {
+              annual_kwh: annual, monthly_kwh: monthly,
+              segments: perSeg.map(({ monthly: _m, ...rest }) => rest),
+              source: "PVGIS v5.3 × Google shading per panel position",
+            },
+            annual_production_kwh: annual,
+          };
         });
         return json({ job_id: `sim-${d.id}` }, 200, headers);
       }
