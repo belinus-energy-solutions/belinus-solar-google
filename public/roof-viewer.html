@@ -11,7 +11,7 @@
   #stage { position: absolute; inset: 0; cursor: grab; touch-action: none; }
   #stage.drag { cursor: grabbing; }
   svg { width: 100%; height: 100%; display: block; }
-  .panel { fill: rgba(11, 22, 40, .88); stroke: #46B2E9; stroke-width: .35; }
+  .panel { fill: rgba(11, 22, 40, .88); stroke: #46B2E9; stroke-width: 1; vector-effect: non-scaling-stroke; }
   .panel.s1 { fill: rgba(16, 36, 64, .88); }
   .panel.s2 { fill: rgba(22, 48, 86, .88); }
   .panel:hover { fill: rgba(5, 173, 229, .75); }
@@ -34,6 +34,7 @@
 <div class="ctl"><button id="zin" aria-label="zoom in">+</button><button id="zout" aria-label="zoom out">−</button><button id="zreset" aria-label="reset">⟲</button></div>
 <svg class="north" viewBox="0 0 34 34" aria-label="North"><circle cx="17" cy="17" r="16" fill="rgba(11,13,15,.82)" stroke="#2a2f33"/><path d="M17 5 L22 20 L17 17 L12 20 Z" fill="#05ade5"/><text x="17" y="30" text-anchor="middle" font-size="8" font-family="Inter" fill="#fff">N</text></svg>
 <div class="hud hidden" id="hud"></div>
+<script src="/utm.js"></script>
 <script>
 const qs = new URLSearchParams(location.search);
 const API = location.origin + "/api";
@@ -44,6 +45,19 @@ const L = {
   en: { panels: "panels", yr: "kWh/year", img: "Imagery", src: "Roof analysis Google Solar API · yield PVGIS (EU JRC)", none: "No design available", seg: "roof face" },
 };
 const nf = (n) => Math.round(n).toLocaleString("nl-BE");
+
+// Image frame: either the Solar API orthophoto (UTM GeoTIFF → PNG, exact
+// alignment with the roof geometry) or, as fallback, a 640×640 Maps Static tile.
+let IW = 640, IH = 640;
+function toPx(lat, lng) {
+  const m = D.roof_image;
+  if (m) {
+    const [e, n] = utmFromLatLng(lat, lng, m.epsg);
+    const [x0, y0, x1, y1] = m.bbox;
+    return [((e - x0) / (x1 - x0)) * m.width, ((y1 - n) / (y1 - y0)) * m.height];
+  }
+  return project(lat, lng, D.center, D.zoom);
+}
 
 // Web Mercator → pixel in the 640×640 logical static-map tile
 function project(lat, lng, c, z) {
@@ -70,18 +84,18 @@ let vb = { x: 0, y: 0, w: 640, h: 640 };
 let svgEl = null;
 const setVb = () => svgEl && svgEl.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
 function zoomAt(f, cx = vb.x + vb.w / 2, cy = vb.y + vb.h / 2) {
-  const nw = Math.min(640, Math.max(90, vb.w / f));
+  const nw = Math.min(Math.max(IW, IH), Math.max(IW / 7, vb.w / f));
   const k = nw / vb.w;
   vb = { x: cx - (cx - vb.x) * k, y: cy - (cy - vb.y) * k, w: nw, h: nw };
   setVb();
 }
 function initialFrame() {
   // Frame the panels (plus margin) so the design is the first thing you see.
-  const pts = D.panels.flatMap((p) => p.poly.map(([la, ln]) => project(la, ln, D.center, D.zoom)));
-  if (!pts.length) { vb = { x: 0, y: 0, w: 640, h: 640 }; return setVb(); }
+  const pts = D.panels.flatMap((p) => p.poly.map(([la, ln]) => toPx(la, ln)));
+  if (!pts.length) { vb = { x: 0, y: 0, w: IW, h: IH }; return setVb(); }
   const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
   const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
-  const span = Math.min(640, Math.max(160, (Math.max(...xs) - Math.min(...xs)) * 2.2, (Math.max(...ys) - Math.min(...ys)) * 2.2));
+  const span = Math.min(Math.max(IW, IH), Math.max(IW / 4, (Math.max(...xs) - Math.min(...xs)) * 2.2, (Math.max(...ys) - Math.min(...ys)) * 2.2));
   vb = { x: cx - span / 2, y: cy - span / 2, w: span, h: span };
   setVb();
 }
@@ -89,8 +103,9 @@ function initialFrame() {
 // small pin on the geocoded address, so the customer recognises the house
 function pin() {
   if (!D.address_point) return "";
-  const [x, y] = project(D.address_point[0], D.address_point[1], D.center, D.zoom);
-  return `<g transform="translate(${x.toFixed(1)},${y.toFixed(1)})"><path d="M0 0 C-3 -5 -5 -7 -5 -10 A5 5 0 1 1 5 -10 C5 -7 3 -5 0 0Z" fill="#05ade5" stroke="#fff" stroke-width="1"/><circle cx="0" cy="-10" r="1.8" fill="#fff"/></g>`;
+  const [x, y] = toPx(D.address_point[0], D.address_point[1]);
+  const k = IW / 640; // keep the pin the same visual size on any image
+  return `<g transform="translate(${x.toFixed(1)},${y.toFixed(1)}) scale(${k.toFixed(3)})"><path d="M0 0 C-3 -5 -5 -7 -5 -10 A5 5 0 1 1 5 -10 C5 -7 3 -5 0 0Z" fill="#05ade5" stroke="#fff" stroke-width="1"/><circle cx="0" cy="-10" r="1.8" fill="#fff"/></g>`;
 }
 
 async function load() {
@@ -102,15 +117,16 @@ async function load() {
     D = await r.json();
   } catch { document.getElementById("msg").textContent = L[lang()].none; return; }
 
+  if (D.roof_image) { IW = D.roof_image.width; IH = D.roof_image.height; }
   const segIdx = [...new Set(D.panels.map((p) => p.segment_index))];
   const polys = D.panels.map((p) => {
-    const pts = p.poly.map(([la, ln]) => project(la, ln, D.center, D.zoom).map((v) => v.toFixed(2)).join(",")).join(" ");
+    const pts = p.poly.map(([la, ln]) => toPx(la, ln).map((v) => v.toFixed(2)).join(",")).join(" ");
     const cls = "panel s" + (segIdx.indexOf(p.segment_index) % 3);
     return `<polygon class="${cls}" points="${pts}"><title>${nf(p.kwh)} kWh DC</title></polygon>`;
   }).join("");
   stage.innerHTML =
-    `<svg id="svg" viewBox="0 0 640 640" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">` +
-    `<image href="${API}/roof-image?design_id=${encodeURIComponent(id)}" x="0" y="0" width="640" height="640"/>` +
+    `<svg id="svg" viewBox="0 0 ${IW} ${IH}" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">` +
+    `<image href="${API}/roof-image?design_id=${encodeURIComponent(id)}" x="0" y="0" width="${IW}" height="${IH}"/>` +
     `<g>${polys}</g>${pin()}</svg>`;
   svgEl = document.getElementById("svg");
   initialFrame();

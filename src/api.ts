@@ -9,7 +9,7 @@
 //   design-status        → imagery/geocode ready
 //   ai-roof              → Google Solar API buildingInsights
 //   autodesigner         → layout.ts (ranked Google panel slots)
-//   cad-url (3D iframe)  → /roof-viewer.html (satellite + panels)
+//   cad-url (3D iframe)  → /roof-viewer.html (Solar API orthophoto + panels)
 //   simulation           → PVGIS PVcalc per roof segment
 //
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GOOGLE_API_KEY,
@@ -20,7 +20,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { batteryOptions, computeQuote, PRICING } from "./pricing.ts";
 import { generateOffertePdf } from "./offerte-pdf.ts";
 import { generateReceiptPdf } from "./receipt-pdf.ts";
-import { buildingInsights, geocode, googleConfigured, staticSatellite } from "./google.ts";
+import { buildingInsights, geocode, googleConfigured, roofOrthophoto, staticSatellite } from "./google.ts";
 import { pvcalc } from "./pvgis.ts";
 import { designLayout, PANEL, viewerZoom } from "./layout.ts";
 
@@ -162,8 +162,29 @@ export async function handleApi(req: Request, route: string): Promise<Response> 
         await patchDesign(d.id, { roof_status: "running" });
         job(d.id, "roof_status", async () => {
           const ins = await buildingInsights({ latitude: d.lat, longitude: d.lng });
+          // True-ortho aerial image for the roof viewer (the Maps Static tile is
+          // not orthorectified: roofs lean and panels would look misplaced).
+          let roof_image: Record<string, unknown> | null = null;
+          try {
+            const bb = ins.boundingBox;
+            const half = bb ? Math.hypot(
+              (bb.ne.latitude - bb.sw.latitude) * 111_320,
+              (bb.ne.longitude - bb.sw.longitude) * 111_320 * Math.cos((d.lat * Math.PI) / 180),
+            ) / 2 : 20;
+            const radius = Math.max(20, Math.min(50, half + 10));
+            const c = ins.center ?? { latitude: d.lat, longitude: d.lng };
+            const img = await roofOrthophoto(c.latitude, c.longitude, radius);
+            const path = `${d.id}.png`;
+            const { error: ue } = await supabase.storage.from("roof-images")
+              .upload(path, img.png, { contentType: "image/png", upsert: true });
+            if (ue) throw ue;
+            roof_image = { ...img.meta, path };
+          } catch (e: any) {
+            console.error("orthophoto failed, falling back to Maps Static:", JSON.stringify(e?.body ?? e?.message ?? e));
+          }
           return {
             insights: ins,
+            roof_image,
             imagery_date: ins.imageryDate
               ? `${ins.imageryDate.year}-${String(ins.imageryDate.month).padStart(2, "0")}-${String(ins.imageryDate.day ?? 1).padStart(2, "0")}`
               : null,
@@ -259,12 +280,22 @@ export async function handleApi(req: Request, route: string): Promise<Response> 
           segments: d.layout?.segments ?? [],
           panels: d.layout?.panels ?? [],
           address_point: d.layout?.address_point ?? [d.lat, d.lng],
+          roof_image: d.roof_image ?? null, // set → image is a UTM orthophoto (see utm.js)
           production: d.production ?? null,
         }, 200, headers);
       }
 
       case "GET roof-image": {
         const d = await getDesign(q.get("design_id"));
+        if (d.roof_image?.path) {
+          const { data: blob, error } = await supabase.storage.from("roof-images").download(d.roof_image.path);
+          if (!error && blob) {
+            return new Response(blob, {
+              status: 200,
+              headers: { ...headers, "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
+            });
+          }
+        }
         const ins = d.insights ?? {};
         const lat = ins.center?.latitude ?? d.lat, lng = ins.center?.longitude ?? d.lng;
         const zoom = viewerZoom(ins);
