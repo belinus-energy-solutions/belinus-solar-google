@@ -194,7 +194,7 @@ export async function handleApi(req: Request, route: string): Promise<Response> 
         const capWp = Number(body.cap_wp) > 0 ? Number(body.cap_wp) : PRICING.phase_limits_wp.three;
         await patchDesign(d.id, { layout_status: "running" });
         job(d.id, "layout_status", async () => {
-          const layout = designLayout(d.insights, Number(body.target_kwh) || 3500, capWp);
+          const layout = designLayout(d.insights, Number(body.target_kwh) || 3500, capWp, { lat: d.lat, lng: d.lng });
           return { layout, panel_count: layout.panel_count, kwp: layout.kwp, target_kwh: layout.target_kwh };
         });
         return json({ job_id: `layout-${d.id}`, components_used: { solar_panels: [`belinus ${PANEL.wp()} Wp`] } }, 200, headers);
@@ -258,6 +258,7 @@ export async function handleApi(req: Request, route: string): Promise<Response> 
           panel_count: d.layout?.panel_count ?? 0, kwp: d.layout?.kwp ?? 0,
           segments: d.layout?.segments ?? [],
           panels: d.layout?.panels ?? [],
+          address_point: d.layout?.address_point ?? [d.lat, d.lng],
           production: d.production ?? null,
         }, 200, headers);
       }
