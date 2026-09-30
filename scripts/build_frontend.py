@@ -82,6 +82,43 @@ rep('''      return r.status === "succeeded";
 rep('<title>Belinus — My Energyscan</title>',
     '<title>Belinus — My Energyscan</title>\n<meta name="engine" content="google-solar+pvgis">')
 
+# ---- Online promo on the quote: shown as a condition (50% deposit paid online) ----
+rep("""  .deposit { text-align: right; font-family: 'JetBrains Mono', monospace; font-size: .74rem; color: var(--grey); margin-top: 10px; }""",
+    """  .deposit { text-align: right; font-family: 'JetBrains Mono', monospace; font-size: .74rem; color: var(--grey); margin-top: 10px; }
+  .onlinePromo { margin: 12px 0 0 auto; max-width: 420px; text-align: left; padding: 12px 16px; border-left: 3px solid var(--cyan);
+                 background: rgba(0,170,228,.07); font-family: Inter, sans-serif; color: var(--ink); }
+  .onlinePromo .opl { font-family: 'JetBrains Mono', monospace; font-size: .62rem; letter-spacing: .2em; color: var(--cyan); font-weight: 700; }
+  .onlinePromo .opc { font-size: .72rem; color: var(--grey); margin: 3px 0 8px; }
+  .onlinePromo .opr { display: flex; justify-content: space-between; gap: 16px; font-size: .8rem; padding: 2px 0; }
+  .onlinePromo .opr .mono { font-family: 'JetBrains Mono', monospace; }""")
+rep("""const depositText = (qt) => qt.price.deposit_label === "reservation"
+  ? I18N[LANG].depositReservation(fmt2.format(qt.price.deposit))
+  : I18N[LANG].depositLine(fmt2.format(qt.price.deposit));""",
+    """// Deposit line + the online promo as a condition: −15% only when the 50%
+// deposit is paid online at order (returns HTML).
+const OP_TXT = {
+  en: { cond: "Only when you pay the 50% deposit online at order", disc: "Discount (incl. VAT)", tot: "Total when paying online", dep: "Deposit paid online (50%)" },
+  nl: { cond: "Enkel bij online betaling van 50% voorschot bij bestelling", disc: "Korting (incl. btw)", tot: "Totaal bij online betaling", dep: "Voorschot online (50%)" },
+};
+const depositText = (qt) => {
+  const p = qt.price, L = I18N[LANG];
+  if (p.deposit_label === "reservation") return L.depositReservation(fmt2.format(p.deposit));
+  const op = p.online_promo;
+  if (!op) return L.depositLine(fmt2.format(p.deposit));
+  const T = OP_TXT[LANG] || OP_TXT.en;
+  return L.depositLine(fmt2.format(p.deposit_offline ?? Math.round(p.total_incl_vat * 50) / 100)) +
+    `<div class="onlinePromo"><div class="opl">${t("promoLbl15")}</div><div class="opc">${T.cond}</div>` +
+    `<div class="opr"><span>${T.disc}</span><span class="mono">− € ${fmt2.format(op.discount_incl_vat)}</span></div>` +
+    `<div class="opr"><b>${T.tot}</b><b class="mono">€ ${fmt2.format(op.total_incl_vat)}</b></div>` +
+    `<div class="opr"><span>${T.dep}</span><span class="mono">€ ${fmt2.format(op.deposit)}</span></div></div>`;
+};""")
+rep("""  $("depositLine").textContent = depositText(qt);""",
+    """  $("depositLine").innerHTML = depositText(qt);""")
+# Kit card: state the condition under the promo prices
+rep("""    sb += `<div class="kitPrices"><span class="strike mono">€ ${fmt2.format(listT)}</span><span class="promoPrice mono">€ ${fmt2.format(promoT)}</span></div>`;""",
+    """    sb += `<div class="kitPrices"><span class="strike mono">€ ${fmt2.format(listT)}</span><span class="promoPrice mono">€ ${fmt2.format(promoT)}</span></div>`;
+    sb += `<div class="note" style="color:#9aa3a8;margin-top:4px">${(OP_TXT[LANG] || OP_TXT.en).cond}</div>`;""")
+
 if "aurora" in s.lower():
     sys.exit("build_frontend: an Aurora reference is left in the page")
 open(out, "w", encoding="utf-8").write(s)
