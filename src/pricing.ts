@@ -12,6 +12,8 @@
 //  - Company-car home charging reimbursed by employer at €0,30/kWh
 //  - Bank financing capped at the Belgian legal max duration per amount
 //  - Rent = 20 years with end-of-contract buy option; system runs 10 more years
+//  - Online promo −15% on the kit (stock) only when the 50% deposit is paid online (2026-09-30)
+//  - Hybrid inverter always shown as a quote line (2026-09-30)
 //  - ROI computed over 30 years
 // ============================================================
 
@@ -28,6 +30,15 @@ export const PRICING = {
   vat_rate_kit: 0.06,       // residential ≥10 years old; 21% otherwise
   quote_valid_days: 30,
   deposit_rate: 0.50,       // 50% voorschot bij bestelling
+  // Online promo (stock catalog): −15% on the kit lines, ONLY when the customer
+  // pays the 50% deposit online at order. BEBAT (legal recycling fee) is not
+  // discounted. The quote shows list prices + the conditional promo; the
+  // invoice after online payment carries the discount as separate lines.
+  online_promo: {
+    rate: 0.15,
+    label: "Online promo -15%",   // ASCII hyphen: PDF standard fonts
+    condition: "enkel bij online betaling van 50% voorschot",
+  },
 
   // Panels: 500 Wp factory spec; price per unit, installed (excl. VAT),
   // identical for both catalogs.
@@ -120,6 +131,9 @@ export const CATALOG = {
       single: { name: "Solis 5kW Hybrid 1P", sheet: "Datasheet Solis 5kW Hybrid 1P.pdf" },
       three: { name: "Solis 3P 10kW Hybrid", sheet: "Datasheet Solis 3P 10kW Hybrid.pdf" },
       warranty: "5y",
+      // Price per inverter, excl. VAT. 0 = included in the kit price (the line
+      // is still shown on the quote as "inbegrepen").
+      price: { single: 0, three: 0 },
     },
     battery: {
       single: { name: "belinus Energywall LV", sheet: "Datasheet_Belinus_Energiewall_LV_NL_20230502.pdf" },
@@ -138,6 +152,7 @@ export const CATALOG = {
       single: { name: "belinus Powerbox S1-5", sheet: "belinus Powerbox S1-5 ENv2.pdf" },
       three: { name: "belinus Powerbox S3-10", sheet: "belinus Powerbox S3-10 ENv2.pdf" },
       warranty: "10y",
+      price: { single: 0, three: 0 },   // excl. VAT; 0 = included in the kit
     },
     battery: {
       single: { name: "Energywall H1 — sodium-ion", sheet: "belinus Energywall H1v2.pdf" },
@@ -222,6 +237,25 @@ export interface LineItem {
   unit_price: number;  // excl. VAT
   vat_rate: number;
   amount: number;      // excl. VAT
+  no_discount?: boolean; // excluded from the online promo (BEBAT)
+}
+
+/** Subtotal, VAT per rate and total incl. VAT for a set of line items. */
+export function totals(items: LineItem[]) {
+  const subtotal_excl_vat = round2(items.reduce((a, i) => a + i.amount, 0));
+  const vat_groups: Record<string, { base: number; vat: number }> = {};
+  for (const i of items) {
+    const key = (i.vat_rate * 100).toFixed(0);
+    vat_groups[key] ??= { base: 0, vat: 0 };
+    vat_groups[key].base = round2(vat_groups[key].base + i.amount);
+  }
+  let total_vat = 0;
+  for (const [rate, g] of Object.entries(vat_groups)) {
+    g.vat = round2(g.base * (Number(rate) / 100));
+    total_vat += g.vat;
+  }
+  total_vat = round2(total_vat);
+  return { subtotal_excl_vat, vat_groups, total_vat, total_incl_vat: round2(subtotal_excl_vat + total_vat) };
 }
 
 export function computeQuote(input: QuoteInput) {
@@ -277,6 +311,16 @@ export function computeQuote(input: QuoteInput) {
       vat_rate: P.vat_rate_kit, amount: round2(panelCount * unit),
     });
   }
+  {
+    // Hybrid inverter — always part of the kit (panels and/or battery).
+    const inv = cat.inverter[phaseKey];
+    const invPrice = round2(cat.inverter.price[phaseKey] * pf);
+    items.push({
+      description: `KIT — ${inv.name}${invPrice === 0 ? " (inbegrepen)" : ""}`,
+      quantity: 1, unit: "Stuk(s)", unit_price: invPrice,
+      vat_rate: P.vat_rate_kit, amount: invPrice,
+    });
+  }
   if (mods > 0) {
     const batPrice = round2(mods * B.module_price * pf);
     items.push({
@@ -287,7 +331,7 @@ export function computeQuote(input: QuoteInput) {
     items.push({
       description: `BEBAT thuisbatterij`,
       quantity: mods, unit: "Stuk(s)", unit_price: B.bebat_per_module,
-      vat_rate: 0, amount: round2(mods * B.bebat_per_module),
+      vat_rate: 0, amount: round2(mods * B.bebat_per_module), no_discount: true,
     });
   }
   if (evAdd) {
@@ -325,27 +369,38 @@ export function computeQuote(input: QuoteInput) {
   }
 
   // ---- Totals with per-rate VAT split ----
-  const subtotal_excl_vat = round2(items.reduce((a, i) => a + i.amount, 0));
-  const vat_groups: Record<string, { base: number; vat: number }> = {};
-  for (const i of items) {
-    const key = (i.vat_rate * 100).toFixed(0);
-    vat_groups[key] ??= { base: 0, vat: 0 };
-    vat_groups[key].base = round2(vat_groups[key].base + i.amount);
+  const { subtotal_excl_vat, vat_groups, total_vat, total_incl_vat } = totals(items);
+
+  // Online promo (stock only): one discount line per VAT rate on the kit lines,
+  // valid only when the 50% deposit is paid online at order.
+  let online_promo: null | {
+    rate: number; label: string; condition: string; items: LineItem[];
+    subtotal_excl_vat: number; vat_groups: Record<string, { base: number; vat: number }>;
+    total_vat: number; total_incl_vat: number; discount_incl_vat: number; deposit: number;
+  } = null;
+  if (catKey === "stock") {
+    const OP = P.online_promo;
+    const bases: Record<string, number> = {};
+    for (const i of items) if (!i.no_discount && i.amount > 0) bases[String(i.vat_rate)] = (bases[String(i.vat_rate)] ?? 0) + i.amount;
+    const promoItems: LineItem[] = Object.entries(bases).map(([rate, base]) => {
+      const d = -round2(base * OP.rate);
+      return { description: `${OP.label} — online betaling voorschot`, quantity: 1, unit: "Stuk(s)", unit_price: d, vat_rate: Number(rate), amount: d, no_discount: true };
+    });
+    const t = totals([...items, ...promoItems]);
+    online_promo = {
+      rate: OP.rate, label: OP.label, condition: OP.condition, items: promoItems, ...t,
+      discount_incl_vat: round2(total_incl_vat - t.total_incl_vat),
+      deposit: round2(t.total_incl_vat * P.deposit_rate),
+    };
   }
-  let total_vat = 0;
-  for (const [rate, g] of Object.entries(vat_groups)) {
-    g.vat = round2(g.base * (Number(rate) / 100));
-    total_vat += g.vat;
-  }
-  total_vat = round2(total_vat);
-  const total_incl_vat = round2(subtotal_excl_vat + total_vat);
-  // Online promo: 15% off the stock catalog. The quote PDF keeps the normal
-  // list prices — the rebate only reflects in the payment amounts.
-  const promo_total_incl_vat = catKey === "stock" ? round2(total_incl_vat * 0.85) : null;
-  // Stock: 50% deposit (on the promo total). New lineup: €100 reservation, fully refundable.
+  const promo_total_incl_vat = online_promo ? online_promo.total_incl_vat : null;
+  // Stock: 50% deposit. Paid online (the web checkout) → on the promo total;
+  // otherwise (bank transfer / Odoo quote) → on the list total.
+  // New lineup: €100 reservation, fully refundable.
+  const deposit_offline = cat.deposit_flat != null ? cat.deposit_flat : round2(total_incl_vat * P.deposit_rate);
   const deposit = cat.deposit_flat != null
     ? cat.deposit_flat
-    : round2((promo_total_incl_vat ?? total_incl_vat) * P.deposit_rate);
+    : (online_promo ? online_promo.deposit : deposit_offline);
   const deposit_label: "deposit" | "reservation" = cat.deposit_flat != null ? "reservation" : "deposit";
 
   // ---- Hardware economics: replacement costs over the 30-year horizon ----
@@ -470,9 +525,10 @@ export function computeQuote(input: QuoteInput) {
       total_vat,
       total_incl_vat,
       list_total_incl_vat: total_incl_vat,
-      ...(promo_total_incl_vat != null ? { promo_total_incl_vat, promo_rate: 0.15 } : {}),
+      ...(online_promo ? { promo_total_incl_vat, promo_rate: online_promo.rate, online_promo } : {}),
       deposit_rate: P.deposit_rate,
-      deposit,
+      deposit,          // amount charged by the online checkout
+      deposit_offline,  // 50% of the list total (no online payment)
       deposit_label,
     },
     savings: {
