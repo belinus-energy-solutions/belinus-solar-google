@@ -629,8 +629,15 @@ export async function handleApi(req: Request, route: string): Promise<Response> 
             meta_values: [dateStr, dateStr, "Voorschot voldaan", qrow.quote_number ?? "—"],
             customer_label: "FACTUREREN AAN",
             customer,
-            items: qrow.quote_json.items,
-            price: qrow.quote_json.price,
+            // Paid online → the online promo applies: discount lines on the invoice.
+            ...(() => {
+              const pr = qrow.quote_json.price, op = pr.online_promo;
+              return op
+                ? { items: [...qrow.quote_json.items, ...op.items],
+                    price: { ...pr, subtotal_excl_vat: op.subtotal_excl_vat, vat_groups: op.vat_groups, total_incl_vat: op.total_incl_vat },
+                    promo_applied: true }
+                : { items: qrow.quote_json.items, price: pr };
+            })(),
             paid_card: {
               label: "BETAALD",
               pre: "Voorschot van",
