@@ -109,6 +109,14 @@ async function faceYields(ins: any, lat: number, lng: number, address: { lat: nu
   return out;
 }
 
+// Absolute base for datasheet links in PDFs (PUBLIC_URL when set, else request origin).
+function linkBase(req: Request, url: URL) {
+  const proto = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() ?? url.protocol.replace(":", "");
+  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? url.host;
+  const base = (Deno.env.get("PUBLIC_URL") ?? `${proto}://${host}`).replace(/\/$/, "");
+  return `${base}/datasheets/`;
+}
+
 // Satellite tiles are immutable per design — cache in memory.
 const tileCache = new Map<string, Uint8Array>();
 
@@ -468,6 +476,7 @@ export async function handleApi(req: Request, route: string): Promise<Response> 
         const lead = qrow.leads;
         const qd = new Date(qrow.created_at);
         const pdf = await generateOffertePdf({
+          link_base: linkBase(req, url),
           quote_number: qrow.quote_number,
           quote_date: qd,
           valid_until: new Date(qd.getTime() + PRICING.quote_valid_days * 86400_000),
@@ -586,6 +595,7 @@ export async function handleApi(req: Request, route: string): Promise<Response> 
         };
         const pdf = await generateOffertePdf(isReservation
           ? {
+            link_base: linkBase(req, url),
             doc_type: "Productreservatie",
             paid_badge: "GERESERVEERD",
             quote_number: docNo,
@@ -618,6 +628,7 @@ export async function handleApi(req: Request, route: string): Promise<Response> 
             demo_note: "DEMO — geen echte reservatie / no real reservation",
           }
           : {
+            link_base: linkBase(req, url),
             doc_type: "Factuur",
             paid_badge: "BETAALD",
             quote_number: docNo,
