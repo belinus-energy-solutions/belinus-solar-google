@@ -1,13 +1,17 @@
+import { fromArrayBuffer } from "npm:geotiff@2.1.3";
+import { encode as encodePng } from "npm:fast-png@6.2.0";
+
 // ============================================================
 // Google Maps Platform helpers — Geocoding, Solar API (Building
-// Insights) and Maps Static (satellite tile for the roof viewer).
+// Insights + the Data Layers aerial image) and Maps Static (fallback
+// satellite tile for the roof viewer).
 //
 // One server-side key (GOOGLE_API_KEY) with these APIs enabled:
 //   - Geocoding API
 //   - Solar API
 //   - Maps Static API
-// The key never reaches the browser: the viewer loads the satellite
-// image through /api/roof-image.
+// The key never reaches the browser: the viewer loads the roof image
+// through /api/roof-image.
 // ============================================================
 
 const KEY = () => (Deno.env.get("GOOGLE_API_KEY") ?? "").trim();
@@ -87,6 +91,64 @@ export async function buildingInsights(loc: LatLng) {
     body: {
       message: "Geen dakgegevens beschikbaar voor dit adres / no roof data available for this address",
       detail: lastErr?.body ?? null,
+    },
+  };
+}
+
+export type RoofImage = {
+  png: Uint8Array;
+  meta: {
+    epsg: number;                              // UTM zone, e.g. 32631 for Belgium
+    bbox: [number, number, number, number];    // minX, minY, maxX, maxY in metres (UTM)
+    width: number; height: number;             // pixels
+    imagery_date: string | null;
+    quality: string | null;
+  };
+};
+
+/**
+ * The aerial image the Solar API itself used for the roof analysis
+ * (Data Layers → RGB GeoTIFF). Unlike the Maps Static satellite tile it is
+ * a true orthophoto: roofs sit exactly where the panel geometry says they
+ * are, so the drawn panels line up with the real roof.
+ * Billed as a Data Layers request (one per scan; the PNG is stored).
+ */
+export async function roofOrthophoto(lat: number, lng: number, radiusM: number): Promise<RoofImage> {
+  requireKey();
+  let layers: any = null, lastErr: any = null;
+  for (const q of ["HIGH", "MEDIUM"]) {
+    const u = new URL("https://solar.googleapis.com/v1/dataLayers:get");
+    u.searchParams.set("location.latitude", lat.toFixed(7));
+    u.searchParams.set("location.longitude", lng.toFixed(7));
+    u.searchParams.set("radiusMeters", String(Math.round(radiusM)));
+    u.searchParams.set("view", "IMAGERY_LAYERS");
+    u.searchParams.set("requiredQuality", q);
+    u.searchParams.set("pixelSizeMeters", q === "HIGH" ? "0.1" : "0.25");
+    u.searchParams.set("key", KEY());
+    try { layers = await gfetch(u.toString()); break; } catch (e: any) {
+      lastErr = e;
+      if (e?.status !== 404) throw e;
+    }
+  }
+  if (!layers?.rgbUrl) throw lastErr ?? { status: 404, body: { message: "No aerial image" } };
+
+  const res = await fetch(`${layers.rgbUrl}&key=${KEY()}`);
+  if (!res.ok) throw { status: res.status, body: { message: `GeoTIFF ${res.status}` } };
+  const tiff = await fromArrayBuffer(await res.arrayBuffer());
+  const img = await tiff.getImage();
+  const width = img.getWidth(), height = img.getHeight();
+  const rgb = await img.readRasters({ interleave: true, samples: [0, 1, 2] }) as unknown as ArrayLike<number>;
+  const png = encodePng({ width, height, data: Uint8Array.from(rgb), channels: 3 });
+  const bb = img.getBoundingBox() as number[];
+  const d = layers.imageryDate;
+  return {
+    png,
+    meta: {
+      epsg: Number(img.getGeoKeys()?.ProjectedCSTypeGeoKey ?? 32631),
+      bbox: [bb[0], bb[1], bb[2], bb[3]],
+      width, height,
+      imagery_date: d ? `${d.year}-${String(d.month).padStart(2, "0")}-${String(d.day ?? 1).padStart(2, "0")}` : null,
+      quality: layers.imageryQuality ?? null,
     },
   };
 }
