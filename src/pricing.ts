@@ -126,6 +126,7 @@ export const CATALOG = {
     price_factor: 1.0,
     deposit_flat: null as number | null,  // null → 50% deposit
     delivery: null as string | null,
+    // TODO: add the AIKO datasheet PDF to belinus-solar-test/datasheets and set it here.
     panels: { name: "AIKO Back Contact zonnepanelen", warranty: "25y", sheet: null as string | null },
     inverter: {
       single: { name: "Solis 5kW Hybrid 1P", sheet: "Datasheet Solis 5kW Hybrid 1P.pdf" },
@@ -238,6 +239,9 @@ export interface LineItem {
   vat_rate: number;
   amount: number;      // excl. VAT
   no_discount?: boolean; // excluded from the online promo (BEBAT)
+  // Product/service folder: a datasheet file name (served from /datasheets/)
+  // or an absolute URL. Shown as a link on the quote line.
+  link?: string | null;
 }
 
 /** Subtotal, VAT per rate and total incl. VAT for a set of line items. */
@@ -309,6 +313,7 @@ export function computeQuote(input: QuoteInput) {
       description: `KIT — ${cat.panels.name} ${kwpTheoretical} kWp`,
       quantity: panelCount, unit: "Stuk(s)", unit_price: unit,
       vat_rate: P.vat_rate_kit, amount: round2(panelCount * unit),
+      link: cat.panels.sheet,
     });
   }
   {
@@ -319,6 +324,7 @@ export function computeQuote(input: QuoteInput) {
       description: `KIT — ${inv.name}${invPrice === 0 ? " (inbegrepen)" : ""}`,
       quantity: 1, unit: "Stuk(s)", unit_price: invPrice,
       vat_rate: P.vat_rate_kit, amount: invPrice,
+      link: inv.sheet,
     });
   }
   if (mods > 0) {
@@ -327,11 +333,13 @@ export function computeQuote(input: QuoteInput) {
       description: `KIT — ${batName} ${battery_kwh} kWh`,
       quantity: 1, unit: "Stuk(s)", unit_price: batPrice,
       vat_rate: P.vat_rate_kit, amount: batPrice,
+      link: cat.battery[phaseKey].sheet,
     });
     items.push({
       description: `BEBAT thuisbatterij`,
       quantity: mods, unit: "Stuk(s)", unit_price: B.bebat_per_module,
       vat_rate: 0, amount: round2(mods * B.bebat_per_module), no_discount: true,
+      link: "https://www.bebat.be",
     });
   }
   if (evAdd) {
@@ -340,6 +348,7 @@ export function computeQuote(input: QuoteInput) {
       description: P.ev.charger_label,
       quantity: 1, unit: "Stuk(s)", unit_price: chPrice,
       vat_rate: P.vat_rate_kit, amount: chPrice,
+      link: "belinus ETAPPro v2.pdf",
     });
   }
 
