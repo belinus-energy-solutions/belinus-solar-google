@@ -22,7 +22,6 @@ import { generateOffertePdf } from "./offerte-pdf.ts";
 import { generateReceiptPdf } from "./receipt-pdf.ts";
 import { buildingInsights, geocode, googleConfigured, roofOrthophoto, staticSatellite } from "./google.ts";
 import { pvcalc } from "./pvgis.ts";
-import { formsConfigured } from "./webforms.ts";
 import { designLayout, type FaceYield, faceMount, PANEL, reachableFaces, viewerZoom } from "./layout.ts";
 
 const SOURCE = "google";
@@ -157,7 +156,6 @@ export async function handleApi(req: Request, route: string): Promise<Response> 
         return json({
           engine: "google-solar+pvgis",
           google_key_set: googleConfigured(),
-          website_forms: formsConfigured(),
           supabase_set: !!Deno.env.get("SUPABASE_URL") && !!Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
           panel: { wp: PANEL.wp(), length_m: PANEL.length(), width_m: PANEL.width() },
           allowed_origins: ALLOWED,

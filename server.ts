@@ -1,7 +1,6 @@
 // Belinus Solar — custom stack (Google Solar API + PVGIS)
 // Single container: static frontend (public/) + JSON API under /api/*.
 import { handleApi } from "./src/api.ts";
-import { handleWebForms } from "./src/webforms.ts";
 
 const PORT = Number(Deno.env.get("PORT") ?? 8080);
 const ROOT = new URL("./public/", import.meta.url);
@@ -33,14 +32,11 @@ async function serveStatic(pathname: string): Promise<Response> {
   }
 }
 
-Deno.serve({ port: PORT, hostname: "0.0.0.0" }, async (req) => {
+Deno.serve({ port: PORT, hostname: "0.0.0.0" }, (req) => {
   const url = new URL(req.url);
   if (url.pathname === "/healthz") return new Response("ok");
   if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
-    const route = url.pathname.replace(/^\/api\/?/, "");
-    const web = await handleWebForms(req, route);
-    if (web) return web;
-    return handleApi(req, route);
+    return handleApi(req, url.pathname.replace(/^\/api\/?/, ""));
   }
   return serveStatic(url.pathname);
 });

@@ -42,11 +42,3 @@ Same Supabase project as the Aurora version (*Belinus Solar*, `ywuuhcixtzutspcbx
 ## Free-tier note
 The Supabase free tier pauses a project after a week without traffic. If both
 versions stop working, restore the project in the Supabase dashboard.
-
-## Website forms (belinus.com)
-- `POST /api/forms` (quote, contact, partner, service) and `POST /api/referrers` — `src/webforms.ts`
-- Each submission is e-mailed to `FORMS_TO` (service@belinus.com) through the imap-mcp container, sent from `MAIL_ACCOUNT` (service@belinus.com)
-- Env: `MAIL_MCP_URL` (secret: imap-mcp secret path `https://mc-vze57riyau.bunny.run/<MCP_AUTH_TOKEN>/mcp`), `WEBSITE_ORIGINS`, optional `FORMS_RATE_MAX` (per IP per 10 min, default 10)
-- Stored in Supabase `web_submissions` when migration `20261101200000_web_submissions.sql` is applied (best-effort; mail is what must succeed)
-- `/api/health` → `website_forms.mail_set` must be true
-- 502 `mail_failed`: imap-mcp unreachable, wrong token, or `allow_send` off for service@belinus.com; the website then offers the visitor a prepared e-mail instead
